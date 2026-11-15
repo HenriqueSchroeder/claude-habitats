@@ -9,6 +9,11 @@
       "name": "habitat-core",
       "source": "./plugins/core",
       "description": "Shared engine for the habitat scenes: session signals, per-repo memory and the /habitat command"
+    },
+    {
+      "name": "habitat-city",
+      "source": "./plugins/city",
+      "description": "An isometric city behind the conversation that builds itself from your edits and lives with your session"
     }
   ]
 }

@@ -1,0 +1,11 @@
+{
+  "name": "habitat-city",
+  "version": "0.1.0",
+  "description": "An isometric city behind the conversation that builds itself from your edits and lives with your session",
+  "author": {
+    "name": "Henrique Schroeder"
+  },
+  "repository": "https://github.com/HenriqueSchroeder/claude-habitats",
+  "license": "MIT",
+  "dependencies": ["habitat-core"]
+}
