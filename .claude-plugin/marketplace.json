@@ -1,0 +1,14 @@
+{
+  "name": "claude-habitats",
+  "description": "Living backdrops for Claude Code that grow with your session",
+  "owner": {
+    "name": "Henrique Schroeder"
+  },
+  "plugins": [
+    {
+      "name": "habitat-core",
+      "source": "./plugins/core",
+      "description": "Shared engine for the habitat scenes: session signals, per-repo memory and the /habitat command"
+    }
+  ]
+}

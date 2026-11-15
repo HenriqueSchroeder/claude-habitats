@@ -1,0 +1,11 @@
+{
+  "name": "habitat-core",
+  "version": "0.1.0",
+  "description": "Shared engine for the habitat scenes: session signals, per-repo memory and the /habitat command",
+  "author": {
+    "name": "Henrique Schroeder"
+  },
+  "repository": "https://github.com/HenriqueSchroeder/claude-habitats",
+  "license": "MIT",
+  "types": "./types/index.d.ts"
+}
