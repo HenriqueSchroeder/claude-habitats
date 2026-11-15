@@ -10,7 +10,7 @@ export type HabitatSignals = {
   tools: Record<HabitatCategory, number>
   errors: number
   compactions: number
-  /** Edits per file this session, paths relative to the repo root. */
+  /** Edits per file this session, paths relative to the repo root; files outside the repo are left out. */
   files: Record<string, number>
   /** Context window fill, 0 to 1; null before the first response. */
   context: number | null
@@ -27,25 +27,23 @@ export type HabitatEvent =
   | { kind: 'tool'; category: HabitatCategory; tool: string; file?: string; isError: boolean }
   | { kind: 'compact' }
   | { kind: 'usage' }
-  | { kind: 'activate'; scene: string | null }
+  | { kind: 'activate'; scene: string | null; previous: string | null }
 
 export type HabitatListener = (signals: HabitatSignals, event: HabitatEvent) => void
 
 export type Habitat = {
-  signals: () => HabitatSignals
-  /** Calls the listener on every event; returns the unsubscribe. */
-  subscribe: (listener: HabitatListener) => () => void
-  /** A scene announces itself; true when it should draw the backdrop now. */
+  /** Async: another plugin reaches this noun across the engine's plugin boundary. */
+  signals: () => Promise<HabitatSignals>
+  /** Calls the listener on every event. One listener per scene: a reloaded scene replaces its old one. */
+  subscribe: (scene: string, listener: HabitatListener) => void
+  /**
+   * A scene announces itself; true when it should draw the backdrop now: it is the
+   * scene picked with /habitat, or nothing was picked and it loaded first.
+   */
   claim: (scene: string) => Promise<boolean>
-  /** The scene's saved world for the current repo. */
+  /** The scene's saved world for the current repo; outside a repo nothing is kept. */
   load: (scene: string) => Promise<unknown>
   save: (scene: string, data: unknown) => Promise<void>
-  /** Deterministic noise in [0, 1). */
-  rnd: (seed: number, salt?: number) => number
-  /** A negative animation-delay that keeps a CSS loop in phase across redraws. */
-  phase: (now: number, seconds: number) => string
-  /** A full-bleed 1600x1000 SVG document. */
-  svg: (body: string, style?: string) => string
 }
 
 declare module 'claude-code' {

@@ -32,12 +32,16 @@ const fresh = (): HabitatSignals => ({
   active: null,
 })
 
+// ponytail: module state, so reloading the core alone drops the scenes' subscriptions
+// until they reload too; a registry in $.store if core updates ever ship mid-session.
 let signals = fresh()
-const listeners = new Set<HabitatListener>()
+// Tools can run in parallel, so the mood stays 'tool' until the last one returns.
+let running = 0
+const listeners = new Map<string, HabitatListener>()
 const scenes = new Set<string>()
 
 function emit(event: HabitatEvent) {
-  for (const listener of listeners) {
+  for (const listener of listeners.values()) {
     // One broken scene must not stop the others from hearing the event.
     try {
       listener(signals, event)
@@ -50,7 +54,12 @@ function setMood(mood: HabitatMood) {
 }
 
 async function refreshUsage($: EngineInterface) {
-  const usage = await $.session.usage()
+  let usage
+  try {
+    usage = await $.session.usage()
+  } catch {
+    return
+  }
   const percent = usage.context.percent
   const fiveHour = usage.rateLimits.find(limit => limit.kind === 'five_hour')
   const next = {
@@ -63,11 +72,24 @@ async function refreshUsage($: EngineInterface) {
   emit({ kind: 'usage' })
 }
 
+// Each scene owns its theme: the new one sets it, and on 'off' the old one clears it.
 async function activate($: EngineInterface, scene: string | null) {
+  const previous = signals.active
   signals = { ...signals, active: scene }
   await $.store.set('active', scene ?? 'none')
-  if (scene === null) await $.theme.clear()
-  emit({ kind: 'activate', scene })
+  emit({ kind: 'activate', scene, previous })
+}
+
+// Who draws the backdrop: the scene picked with /habitat, else the first scene to load.
+export const claims = (saved: unknown, active: string | null, scene: string) =>
+  saved === scene || (saved === undefined && (active === null || active === scene))
+
+// A saved scene that is no longer installed would leave the backdrop empty for good.
+async function adoptOrphan($: EngineInterface) {
+  const first = [...scenes][0]
+  if (signals.active !== null || first === undefined) return
+  const saved = await $.store.get('active')
+  if (saved !== 'none' && !scenes.has(String(saved))) await activate($, first)
 }
 
 function describe() {
@@ -90,32 +112,21 @@ function describe() {
 export const register: Register = on => {
   on('engine.create', async (_, e, next) => {
     const beneath = await next(e)
-    const keyOf = (scene: string) => `world:${scene}:${signals.repo ?? 'none'}`
+    const keyOf = (scene: string) => `world:${scene}:${signals.repo}`
     const habitat = {
-      signals: () => signals,
-      subscribe: (listener: HabitatListener) => {
-        listeners.add(listener)
-        return () => void listeners.delete(listener)
-      },
+      signals: async () => signals,
+      subscribe: (scene: string, listener: HabitatListener) => void listeners.set(scene, listener),
       claim: async (scene: string) => {
         scenes.add(scene)
         const saved = await beneath.store.get('active')
-        if (saved === 'none') return false
-        // The first scene to load takes the backdrop until /habitat picks another.
-        if (signals.active === null && (saved === undefined || saved === scene || !scenes.has(String(saved)))) {
-          signals = { ...signals, active: scene }
-        }
+        if (claims(saved, signals.active, scene)) signals = { ...signals, active: scene }
         return signals.active === scene
       },
-      load: (scene: string) => beneath.store.get(keyOf(scene)),
-      save: (scene: string, data: unknown) => beneath.store.set(keyOf(scene), data),
-      rnd: (seed: number, salt = 0) => {
-        const x = Math.sin(seed * 12.9898 + salt * 78.233) * 43758.5453
-        return x - Math.floor(x)
+      // Outside a repository there is no place to keep a world: it lives for the session.
+      load: async (scene: string) => (signals.repo === null ? undefined : beneath.store.get(keyOf(scene))),
+      save: async (scene: string, data: unknown) => {
+        if (signals.repo !== null) await beneath.store.set(keyOf(scene), data)
       },
-      phase: (now: number, seconds: number) => `-${((now / 1000) % seconds).toFixed(2)}s`,
-      svg: (body: string, style = '') =>
-        `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1600 1000" preserveAspectRatio="xMidYMid slice"><style>${style}</style>${body}</svg>`,
     }
     return { ...beneath, habitat }
   })
@@ -141,7 +152,9 @@ export const register: Register = on => {
     return { text: `Habitat: ${arg}` }
   })
 
-  on('turn.start', (_, e, next) => {
+  on('turn.start', async ($, e, next) => {
+    // Every scene has loaded by the first turn, so an orphaned pick can fall back now.
+    await adoptOrphan($)
     signals = { ...signals, turns: signals.turns + 1 }
     setMood('thinking')
     emit({ kind: 'turn.start' })
@@ -150,11 +163,14 @@ export const register: Register = on => {
 
   on('tool.call', async ($, e, next) => {
     const category = categoryOf(e.tool)
+    running += 1
     setMood('tool')
-    const input = (e as { input?: { file_path?: unknown } }).input
-    const path = typeof input?.file_path === 'string' ? input.file_path : undefined
+    // Tool arguments sit on the event itself, beside `tool`.
+    const args = e as { file_path?: unknown; notebook_path?: unknown }
+    const path = typeof args.file_path === 'string' ? args.file_path : typeof args.notebook_path === 'string' ? args.notebook_path : undefined
     const root = signals.repo
-    const file = path !== undefined && root !== null && path.startsWith(`${root}/`) ? path.slice(root.length + 1) : path
+    // Only files inside the repo count: the scenes are the repo's.
+    const file = path !== undefined && root !== null && path.startsWith(`${root}/`) ? path.slice(root.length + 1) : undefined
     try {
       const result = await next(e)
       const isError = result.isError === true || result.deny !== undefined
@@ -168,7 +184,8 @@ export const register: Register = on => {
       emit({ kind: 'tool', category, tool: e.tool, file, isError })
       return result
     } finally {
-      setMood('thinking')
+      running -= 1
+      if (running === 0) setMood('thinking')
     }
   })
 
@@ -182,7 +199,7 @@ export const register: Register = on => {
   on('turn.complete', async ($, e, next) => {
     setMood('idle')
     emit({ kind: 'turn.complete' })
-    await refreshUsage($)
+    void refreshUsage($)
     return next(e)
   })
 }
